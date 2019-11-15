@@ -7,6 +7,9 @@ import numpy as np
 import os
 import pandas as pd
 import pykonal
+import pympler.muppy
+import pympler.summary
+import pympler.tracker
 import scipy.optimize
 import scipy.sparse
 import scipy.sparse.linalg
@@ -341,7 +344,6 @@ def id_distribution_loop(event_ids):
     :param event_ids: Event ids.
     :return: None
     """
-    logger.debug("Beginning event distribution loop.")
     try:
         return (_id_distribution_loop(event_ids))
     except Exception as exc:
@@ -355,7 +357,6 @@ def _id_distribution_loop(ids):
     for myid in ids:
         iid += 1
         requesting_rank = COMM.recv(source=mpi4py.MPI.ANY_SOURCE, tag=ID_REQUEST_TAG)
-        logger.debug(f"Sending ID #{iid} of {nids} (ID: {myid}) to processor rank {requesting_rank}")
         COMM.send(myid, dest=requesting_rank, tag=ID_TRANSMISSION_TAG)
     for irank in range(WORLD_SIZE - 1):
         requesting_rank = COMM.recv(source=mpi4py.MPI.ANY_SOURCE, tag=ID_REQUEST_TAG)
@@ -372,7 +373,6 @@ def event_location_loop(payload, wdir):
     :param params:
     :return:
     """
-    logger.debug("Beginning event location loop.")
     try:
         return (_event_location_loop(payload, wdir))
     except Exception as exc:
@@ -398,7 +398,6 @@ def _event_location_loop(payload, wdir):
         event_id = COMM.recv(source=ROOT_RANK, tag=ID_TRANSMISSION_TAG)
         if event_id is None:
             return (df_events)
-        logger.debug(f"Locating event id #{event_id}")
         event = locate_event(
             df_arrivals.loc[event_id],
             bounds,
@@ -612,8 +611,19 @@ def main(argc, params):
         None if RANK is not ROOT_RANK else payload,
         root=ROOT_RANK
     )
+    old_summary = None
     # Iterate the inversion process.
     for iiter in range(params['niter']):
+        if RANK == ROOT_RANK:
+            memory_tracker = pympler.tracker.SummaryTracker()
+            new_summary = memory_tracker.create_summary()
+            if old_summary is not None:
+                for line in memory_tracker.format_diff(summary1=old_summary, summary2=new_summary):
+                    logger.debug(line)
+            old_summary = new_summary	
+            #all_objects = pympler.muppy.get_objects()
+            #summary = pympler.summary.summarize(all_objects)
+            #pympler.summary.print_(summary)
         payload = iterate_inversion(payload, argc, params, iiter)
 
 
@@ -637,13 +647,7 @@ def iterate_inversion(payload, argc, params, iiter):
 def _iterate_inversion(payload, argc, params, iiter):
     # Update P-wave velocity model.
     logger.debug(f"Currently using {int(mprof.memory_usage(-1)[0])}MB of memory.")
-    if RANK == ROOT_RANK:
-        for key in payload:
-            logger.debug(f"{get_size(payload[key])} --> {key}")
     payload['vmodel_p'] = update_velocity_model(payload, params, 'P')
-    if RANK == ROOT_RANK:
-        for key in payload:
-            logger.debug(f"{get_size(payload[key])} --> {key}")
     # Save P-wave velocity model to disk.
     if RANK == ROOT_RANK:
         write_vmodel_to_disk(payload['vmodel_p'], 'P', params, argc, iiter)
@@ -657,9 +661,9 @@ def _iterate_inversion(payload, argc, params, iiter):
     ## Update event locations.
     #logger.debug(f"Currently using {int(mprof.memory_usage(-1)[0])}MB of memory.")
     #payload['df_events'] = update_event_locations(payload, argc, params, iiter)
-    df_residuals = compute_residuals(payload, argc, params, iiter)
-    if RANK == ROOT_RANK:
-        write_events_to_disk(payload['df_events'], df_residuals, params, argc, iiter)
+    #df_residuals = compute_residuals(payload, argc, params, iiter)
+    #if RANK == ROOT_RANK:
+    #    write_events_to_disk(payload['df_events'], df_residuals, params, argc, iiter)
 
     return (payload)
 
@@ -1247,7 +1251,7 @@ def _update_velocity_model(payload, params, phase):
     vmodel = payload['vmodel_p'] if phase == 'P' else payload['vmodel_s']
     try:
         wdir = COMM.bcast(
-            None if RANK is not ROOT_RANK else tempfile.mkdtemp(dir=argc.working_dir),
+            None if RANK is not ROOT_RANK else "/home/iron-00/malcolcw/proj/tomo/scratch/traveltimes",#tempfile.mkdtemp(dir=argc.working_dir),
             root=ROOT_RANK
         )
         if RANK == ROOT_RANK:
@@ -1255,7 +1259,7 @@ def _update_velocity_model(payload, params, phase):
         # Compute traveltime-lookup tables
         if RANK == ROOT_RANK:
             logger.info(f"Computing {phase}-wave traveltime-lookup tables.")
-        compute_traveltime_lookup_tables(payload, phase, wdir)
+        #compute_traveltime_lookup_tables(payload, phase, wdir)
         COMM.barrier()
         vmodels = []
         for ireal in range(params['nreal']):
@@ -1273,7 +1277,7 @@ def _update_velocity_model(payload, params, phase):
     finally:
         if RANK == ROOT_RANK:
             logger.debug(f'Removing working directory {wdir}')
-            shutil.rmtree(wdir)
+            #shutil.rmtree(wdir)
     return (vmodel)
 
 
