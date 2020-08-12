@@ -503,76 +503,33 @@ class InversionIterator(object):
 
 
     @_utilities.log_errors(logger)
-    def _generate_voronoi_cells(self, phase, kvoronoi, nvoronoi, alpha):
+    def _generate_voronoi_cells(self, phase, nvoronoi, alpha):
         """
         Generate Voronoi cells using k-medians clustering of raypaths.
         """
 
         logger.debug(
-            f"Generating {kvoronoi} Voronoi cells using k-medians clustering "
-            f"and {nvoronoi} randomly distributed base Voronoi cells."
+            f"Generating {nvoronoi} randomly distributed base Voronoi cells."
         )
 
         if RANK == ROOT_RANK:
 
-            min_coords = self.pwave_model.min_coords
-            max_coords = self.pwave_model.max_coords
+            rho_min = self.pwave_model.min_coords[0]
+            rho_max = self.pwave_model.max_coords[0]
 
-            delta = max_coords - min_coords
+            delta = rho_max - rho_min
 
             if alpha == 0:
-                rho = np.random.rand(nvoronoi, 1) * delta[0] + min_coords[0]
+                rho = np.random.rand(nvoronoi, 1) * delta + rho_min
             else:
-                rho = max_coords[0] - np.random.pareto(alpha, size=(nvoronoi, 1)) * delta[0]
-            theta_phi = np.random.rand(nvoronoi, 2) * delta[1:]  +  min_coords[1:]
+                rho = rho_max - np.random.pareto(alpha, size=(nvoronoi, 1)) * delta
 
-            base_cells = np.hstack([rho, theta_phi])
-            self.voronoi_cells = base_cells
+            stations = self.stations[["latitude", "longitude", "depth"]].values
+            stations = geo2sph(stations)
+            kde = scipy.stats.gaussian_kde(stations[:, 1:].T)
+            theta_phi = kde.resample(nvoronoi).T
 
-            if kvoronoi > 0:
-
-                k_medians_npts = self.cfg["algorithm"]["k_medians_npts"]
-
-                raypaths = []
-                raypath_dir = self.raypath_dir
-
-                columns = ["network", "station"]
-                arrivals = self.sampled_arrivals.set_index(columns)
-                arrivals = arrivals.sort_index()
-                index = arrivals.index.unique()
-
-                events = self.events.set_index("event_id")
-                events["idx"] = np.arange(len(events))
-
-                points = np.empty((0, 3))
-
-                for network, station in index:
-
-                    # Open the raypath file.
-                    filename = f"{network}.{station}.{phase}.h5"
-                    path = os.path.join(raypath_dir, filename)
-                    raypath_file = h5py.File(path, mode="r")
-
-                    event_ids = arrivals.loc[[(network, station)], "event_id"]
-                    idxs = events.loc[event_ids, "idx"]
-                    idxs = np.sort(idxs)
-
-                    _points = raypath_file[phase][:, idxs]
-                    if _points.ndim > 1:
-                        _points = np.apply_along_axis(np.concatenate, 1, _points)
-                    else:
-                        _points = np.stack(_points)
-                    _points = _points.T
-
-                    points = np.vstack([points, _points])
-
-                idxs = np.arange(len(points))
-                idxs = np.random.choice(idxs, k_medians_npts, replace=False)
-                points = points[idxs]
-
-                medians = _clustering.k_medians(kvoronoi, points)
-
-                self.voronoi_cells = np.vstack([self.voronoi_cells, medians])
+            self.voronoi_cells = np.hstack([rho, theta_phi])
 
         self.synchronize(attrs=["voronoi_cells"])
 
@@ -1006,7 +963,6 @@ class InversionIterator(object):
 
         niter = self.cfg["algorithm"]["niter"]
         hvrs = self.cfg["algorithm"]["hvr"]
-        kvoronoi = self.cfg["algorithm"]["kvoronoi"]
         nvoronoi = self.cfg["algorithm"]["nvoronoi"]
         alpha = self.cfg["algorithm"]["paretos_alpha"]
         nreal = self.cfg["algorithm"]["nreal"]
@@ -1032,7 +988,6 @@ class InversionIterator(object):
                     self._trace_rays(phase)
                     self._generate_voronoi_cells(
                         phase,
-                        kvoronoi,
                         nvoronoi,
                         alpha
                     )
