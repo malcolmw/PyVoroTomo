@@ -250,17 +250,13 @@ def parse_cfg(configuration_file):
         "niter",
         fallback=1
     )
-    _cfg["kvoronoi"] = parser.getint(
-        "algorithm",
-        "kvoronoi"
-    )
     _cfg["nvoronoi"] = parser.getint(
         "algorithm",
         "nvoronoi"
     )
-    _cfg["paretos_alpha"] = parser.getfloat(
+    _cfg["zvar_sigma"] = parser.getfloat(
         "algorithm",
-        "paretos_alpha"
+        "zvar_sigma"
     )
     _cfg["hvr"] = [float(v) for v in parser.get(
             "algorithm",
@@ -270,10 +266,6 @@ def parse_cfg(configuration_file):
     _cfg["nreal"] = parser.getint(
         "algorithm",
         "nreal"
-    )
-    _cfg["k_medians_npts"] = parser.getint(
-        "algorithm",
-        "k_medians_npts"
     )
     _cfg["min_narrival"] = parser.getint(
         "algorithm",

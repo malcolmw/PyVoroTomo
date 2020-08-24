@@ -12,7 +12,6 @@ import shutil
 import tempfile
 
 from . import _dataio
-from . import _clustering
 from . import _constants
 from . import _picklable
 from . import _utilities
@@ -503,9 +502,10 @@ class InversionIterator(object):
 
 
     @_utilities.log_errors(logger)
-    def _generate_voronoi_cells(self, phase, nvoronoi, alpha):
+    def _generate_voronoi_cells(self, phase, nvoronoi, sigma):
         """
-        Generate Voronoi cells using k-medians clustering of raypaths.
+        Generate stochastic Voronoi cells based on station density and
+        vertical velocity gradient.
         """
 
         logger.debug(
@@ -519,10 +519,21 @@ class InversionIterator(object):
 
             delta = rho_max - rho_min
 
-            if alpha == 0:
+            if sigma == 0:
                 rho = np.random.rand(nvoronoi, 1) * delta + rho_min
             else:
-                rho = rho_max - np.random.pareto(alpha, size=(nvoronoi, 1)) * delta
+                vv = getattr(self, f"{phase.lower()}wave_model")
+                rho = vv.nodes[:, 0, 0, 0]
+                vv = np.mean(vv.values, axis=(1, 2))
+                drho = np.abs(np.mean(np.diff(rho)))
+                bins = np.arange(np.min(rho)-drho/2, np.max(rho)+drho, drho)
+                grad = np.abs(np.gradient(vv))
+                if np.all(grad == 0):
+                    rho = np.random.rand(nvoronoi, 1) * delta + rho_min
+                else:
+                    grad = scipy.ndimage.gaussian_filter1d(grad, sigma)
+                    dist = scipy.stats.rv_histogram((grad, bins))
+                    rho = dist.rvs(size=(nvoronoi, 1))
 
             stations = self.stations[["latitude", "longitude", "depth"]].values
             stations = geo2sph(stations)
@@ -964,7 +975,7 @@ class InversionIterator(object):
         niter = self.cfg["algorithm"]["niter"]
         hvrs = self.cfg["algorithm"]["hvr"]
         nvoronoi = self.cfg["algorithm"]["nvoronoi"]
-        alpha = self.cfg["algorithm"]["paretos_alpha"]
+        zvar_sigma = self.cfg["algorithm"]["zvar_sigma"]
         nreal = self.cfg["algorithm"]["nreal"]
         relocation_method = self.cfg["relocate"]["method"]
 
@@ -989,7 +1000,7 @@ class InversionIterator(object):
                     self._generate_voronoi_cells(
                         phase,
                         nvoronoi,
-                        alpha
+                        zvar_sigma
                     )
                     self._update_projection_matrix(hvr=hvr)
                     self._compute_sensitivity_matrix(phase, hvr=hvr)
